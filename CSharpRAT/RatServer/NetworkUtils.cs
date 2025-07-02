@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace RatClient
+namespace RatServer // Correct namespace for server project
 {
     public static class NetworkUtils
     {
@@ -13,7 +13,7 @@ namespace RatClient
         {
             if (socket == null || !socket.Connected)
             {
-                throw new ArgumentException("Socket is not connected or null.");
+                throw new ArgumentException("Socket is not connected or null for send.");
             }
             if (data == null)
             {
@@ -22,21 +22,8 @@ namespace RatClient
 
             try
             {
-                // 1. Prefix the data with its length
                 byte[] lengthPrefix = BitConverter.GetBytes(data.Length);
-                if (BitConverter.IsLittleEndian)
-                {
-                    // Ensure network byte order (big-endian) if system is little-endian
-                    // However, for simplicity within this system, we can assume sender/receiver are same endianness
-                    // or decide on a consistent order. Most modern systems are little-endian.
-                    // Let's stick to little-endian for now for BitConverter's default.
-                    // If cross-platform/architecture is a major concern, use IPAddress.HostToNetworkOrder.
-                }
-
-                // 2. Send the length prefix
                 await socket.SendAsync(new ArraySegment<byte>(lengthPrefix), SocketFlags.None);
-
-                // 3. Send the actual data
                 if (data.Length > 0)
                 {
                     await socket.SendAsync(new ArraySegment<byte>(data), SocketFlags.None);
@@ -44,13 +31,12 @@ namespace RatClient
             }
             catch (SocketException ex)
             {
-                Console.WriteLine($"SocketException during send: {ex.Message}");
-                // Potentially re-throw or handle as a disconnection
+                Console.WriteLine($"RatServer.NetworkUtils: SocketException during send: {ex.Message}, ErrorCode: {ex.SocketErrorCode}");
                 throw;
             }
             catch (ObjectDisposedException ex)
             {
-                Console.WriteLine($"ObjectDisposedException during send (socket closed): {ex.Message}");
+                Console.WriteLine($"RatServer.NetworkUtils: ObjectDisposedException during send (socket closed): {ex.Message}");
                 throw;
             }
         }
@@ -59,8 +45,7 @@ namespace RatClient
         {
             if (socket == null || !socket.Connected)
             {
-                // Return null or throw to indicate disconnection/error
-                // Console.WriteLine("ReliableReceiveAsync: Socket is not connected or null.");
+                Console.WriteLine("RatServer.NetworkUtils: Socket is not connected or null for receive.");
                 return null;
             }
 
@@ -69,14 +54,12 @@ namespace RatClient
 
             try
             {
-                // 1. Receive the length prefix
                 while (totalBytesReceivedForLength < LengthPrefixSize)
                 {
                     int bytesReceived = await socket.ReceiveAsync(new ArraySegment<byte>(lengthPrefixBuffer, totalBytesReceivedForLength, LengthPrefixSize - totalBytesReceivedForLength), SocketFlags.None);
                     if (bytesReceived == 0)
                     {
-                        // Connection closed gracefully by the remote host
-                        // Console.WriteLine("ReliableReceiveAsync: Connection closed by remote host while receiving length.");
+                        Console.WriteLine("RatServer.NetworkUtils: Connection closed by remote host while receiving length prefix.");
                         return null;
                     }
                     totalBytesReceivedForLength += bytesReceived;
@@ -84,20 +67,17 @@ namespace RatClient
 
                 int dataLength = BitConverter.ToInt32(lengthPrefixBuffer, 0);
 
-                if (dataLength < 0) // Or some other sanity check for length
+                if (dataLength < 0)
                 {
-                    // Invalid length received, could be data corruption or malicious client
-                    Console.WriteLine($"ReliableReceiveAsync: Invalid data length received: {dataLength}. Closing connection.");
-                    socket.Close();
+                    Console.WriteLine($"RatServer.NetworkUtils: Invalid data length received: {dataLength}.");
                     return null;
                 }
 
                 if (dataLength == 0)
                 {
-                    return Array.Empty<byte>(); // No actual data payload, just length prefix
+                    return Array.Empty<byte>();
                 }
 
-                // 2. Receive the actual data
                 byte[] dataBuffer = new byte[dataLength];
                 int totalBytesReceivedForData = 0;
                 while (totalBytesReceivedForData < dataLength)
@@ -105,8 +85,7 @@ namespace RatClient
                     int bytesReceived = await socket.ReceiveAsync(new ArraySegment<byte>(dataBuffer, totalBytesReceivedForData, dataLength - totalBytesReceivedForData), SocketFlags.None);
                     if (bytesReceived == 0)
                     {
-                        // Connection closed gracefully by the remote host
-                        // Console.WriteLine("ReliableReceiveAsync: Connection closed by remote host while receiving data.");
+                        Console.WriteLine("RatServer.NetworkUtils: Connection closed by remote host while receiving data payload.");
                         return null;
                     }
                     totalBytesReceivedForData += bytesReceived;
@@ -115,13 +94,12 @@ namespace RatClient
             }
             catch (SocketException ex)
             {
-                // Connection forcibly closed or other socket error
-                Console.WriteLine($"SocketException during receive: {ex.Message}");
+                Console.WriteLine($"RatServer.NetworkUtils: SocketException during receive: {ex.Message}, ErrorCode: {ex.SocketErrorCode}");
                 return null;
             }
             catch (ObjectDisposedException ex)
             {
-                Console.WriteLine($"ObjectDisposedException during receive (socket closed): {ex.Message}");
+                Console.WriteLine($"RatServer.NetworkUtils: ObjectDisposedException during receive (socket closed): {ex.Message}");
                 return null;
             }
         }
